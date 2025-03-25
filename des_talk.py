@@ -1,12 +1,14 @@
 """
-Des Talk - A Proxmark3 Desfire Communication Tool
+DES Talk - A Proxmark3 DESFire Communication Tool
 
 Copyright (C) 2025 Trigat
 
 Description:
 This script simplifies the creation and deletion of
-Desfire applications and files. It supports USB, Bluetooth,
+DESFire applications and files. It supports USB, Bluetooth,
 and Termux connections and has been tested on Android and Linux.
+
+Note: Modify TCP_PORT below if using TCP app with Android or Termux
 
 License: GNU General Public License v3.0
 
@@ -28,6 +30,13 @@ import subprocess
 import time
 import os
 import re
+
+try:
+    import pm3  # Used when inside the pm3 environment
+    PM3_AVAILABLE = True
+    p = pm3.pm3()
+except ImportError:
+    PM3_AVAILABLE = False  # Use subprocess instead
 
 # SPECIFY PORT IF USING TCP APP WITH ANDROID OR TERMUX
 TCP_PORT = 4444
@@ -61,29 +70,33 @@ def detect_proxmark_device():
 
 def send_proxmark_command(command):
 
-    full_command = f"{command}\n"
+    if PM3_AVAILABLE:
+        p.console(command)
+        return p.grabbed_output.strip()
 
-    host_device = detect_proxmark_device()
+    else:
+        full_command = f"{command}\n"
+        host_device = detect_proxmark_device()
 
-    process = subprocess.Popen(
-        ["proxmark3", host_device],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
+        process = subprocess.Popen(
+            ["proxmark3", host_device],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
 
-    output, error = process.communicate(full_command)
+        output, error = process.communicate(full_command)
 
-    time.sleep(0.2)  # Small delay to let Proxmark process fully
+        time.sleep(0.2)  # Small delay to let Proxmark process fully
 
-    # Combine stdout and stderr
-    response_lines = (output or "").splitlines() + (error or "").splitlines()
+        # Combine stdout and stderr
+        response_lines = (output or "").splitlines() + (error or "").splitlines()
 
-    # Remove the harmless "STDIN unexpected end" message
-    filtered_response = "\n".join(line for line in response_lines if "STDIN unexpected end" not in line)
+        # Remove the harmless "STDIN unexpected end" message
+        filtered_response = "\n".join(line for line in response_lines if "STDIN unexpected end" not in line)
 
-    return filtered_response.strip()
+        return filtered_response.strip()
 
 def authenticate_and_menu():
 
@@ -101,7 +114,7 @@ def authenticate_and_menu():
         return
 
     while True:
-        
+
         # Get AIDs
         aids_command = f"hf mfdes getaids -n 0 -t {key_type} -k {key}"
         aids_response = send_proxmark_command(aids_command)
