@@ -28,6 +28,7 @@ Full license text: <https://www.gnu.org/licenses/gpl-3.0.html>
 
 import subprocess
 import time
+import sys
 import os
 import re
 
@@ -102,7 +103,7 @@ def authenticate_and_menu():
 
     com_mode = input("Enter communication mode (PLAIN, MAC, ENCRYPT) (Default: PLAIN): ").strip() or "plain"
     key_type = input("Enter key type (DES, 2TDEA, 3TDEA, AES): ").strip()
-    key = input("Enter 8, 16, 24 or 32-byte hex key (no spaces): ").strip()
+    key = input("Enter 8, 16, or 24-byte hex key (no spaces): ").strip()
 
     # Authenticate
     auth_command = f"hf mfdes auth -t {key_type} -k {key} -m {com_mode}"
@@ -153,7 +154,8 @@ def authenticate_and_menu():
         print("3. Delete an AID")
         print("4. Format PICC")
         print("5. Show free memory")
-        print("6. Exit")
+        print("6. Change keys")
+        print("7. Exit")
 
         choice = input("Enter your choice: ").strip()
 
@@ -170,8 +172,12 @@ def authenticate_and_menu():
             select_response = send_proxmark_command(select_command)
             print(select_response)
 
+            # Retrieve AID key 0
+            aid_key_type = input(f"Enter AID encryption algorithm (DES, 2TDEA, 3TDEA, AES) (Default: {key_type.upper()}): ").strip() or key_type
+            aid_key = input(f"Enter AID key (Default: {key}): ").strip() or key
+
             # Show file menu
-            aid_file_menu(selected_aid, key_type, key, com_mode)
+            aid_file_menu(selected_aid, key_type, key, com_mode, aid_key_type, aid_key)
 
         elif choice == "2":
             create_aid(key_type, key, com_mode)
@@ -186,12 +192,15 @@ def authenticate_and_menu():
             free_memory(key_type, key, com_mode)
 
         elif choice == "6":
+            change_key(key_type, key, com_mode)
+
+        elif choice == "7":
             print("Exiting...")
             break
         else:
             print("Invalid choice, please try again.")
 
-def aid_file_menu(selected_aid, key_type, key, com_mode):
+def aid_file_menu(selected_aid, key_type, key, com_mode, aid_key_type, aid_key):
 
     while True:
         print(f"\n[ AID {selected_aid} is open ]")
@@ -202,22 +211,22 @@ def aid_file_menu(selected_aid, key_type, key, com_mode):
         print("4. Write to a File")
         print("5. Edit File Restrictions")
         print("6. Delete a File")
-        print("7. Exit")
+        print("7. Back")
 
         choice = input("Enter your choice: ").strip()
 
         if choice == "1":
-            list_files(selected_aid, key_type, key, com_mode)
+            list_files(selected_aid, key_type, key, com_mode, aid_key_type, aid_key)
         elif choice == "2":
-            read_file(selected_aid, key_type, key, com_mode)
+            read_file(selected_aid, key_type, key, com_mode, aid_key_type, aid_key)
         elif choice == "3":
-            create_file(selected_aid, key_type, key, com_mode)
+            create_file(selected_aid, key_type, key, com_mode, aid_key_type, aid_key)
         elif choice == "4":
-            write_to_file(selected_aid, key_type, key, com_mode)
+            write_to_file(selected_aid, key_type, key, com_mode, aid_key_type, aid_key)
         elif choice == "5":
-            edit_file_restriction(selected_aid, key_type, key, com_mode)
+            edit_file_restriction(selected_aid, key_type, key, com_mode, aid_key_type, aid_key)
         elif choice == "6":
-            delete_file(selected_aid, key_type, key, com_mode)
+            delete_file(selected_aid, key_type, key, com_mode, aid_key_type, aid_key)
         elif choice == "7":
             print("Returning to AID selection...")
             break
@@ -265,10 +274,54 @@ def free_memory(key_type, key, com_mode):
 
     print("❌ Unable to retrieve free memory information.")
 
-def list_files(aid, key_type, key, com_mode):
+def change_key(key_type, key, com_mode):
+    print("\nChange Key - Choose Target:")
+    print("1. PICC (Card Master Key)")
+    print("2. Application Key")
 
+    target = input("Change key for (1/2)? (Default: 1): ").strip() or "1"
+    aid = ""
+
+    if target == "2":
+        aid = input("Enter 6-digit AID (e.g., 010203): ").strip()
+
+    print("\n!! Verify and securely store the new key !!")
+    print("Key length guide:")
+    print("  DES    : 8 bytes (16 hex chars)")
+    print("  2TDEA  : 16 bytes (32 hex chars)")
+    print("  3TDEA  : 24 bytes (48 hex chars)")
+    print("  AES    : 16 bytes (32 hex chars)")
+
+    newalgo = input(f"Enter new key encryption algorithm (DES, 2TDEA, 3TDEA, AES) "
+                    f"(Default: {key_type.upper()}): ").strip() or key_type
+    newkey = input(f"Enter new 8, 16, or 24-byte hex key (no spaces) (Default: {key}): ").strip() or key
+
+    confirm = input("Are you sure you want to change the key? (Key 0) (y or n): ").strip().lower()
+
+    if confirm == "y":
+        changekey_command = f"hf mfdes changekey -n 0 -t {key_type} -k {key} -m {com_mode} " \
+                            f"--newalgo {newalgo} --newkey {newkey} --newver 00 -v"
+        if aid:
+            app_key_type = input(f"Enter original application encryption algorithm (DES, 2TDEA, 3TDEA, AES) "
+                             f"(Default: DES): ").strip() or "DES"
+            app_key = input(f"Enter original application key "
+                             f"(Default: 0000000000000000): ").strip() or "0000000000000000"
+            changekey_command = f"hf mfdes changekey -n 0 -t {app_key_type} -k {app_key} -m {com_mode} " \
+                                f"--newalgo {newalgo} --newkey {newkey} --newver 00 --aid {aid} -v"
+
+        response = send_proxmark_command(changekey_command)
+        print(response)
+        print("\nReauthenticate with the master key.")
+        sys.exit()
+
+    elif confirm == "n":
+        print("Cancelled.")
+    else:
+        print("Invalid input. Please enter 'y' or 'n'.")
+
+def list_files(aid, key_type, key, com_mode, aid_key_type, aid_key):
     print("\nFetching file list...")
-    command = f"hf mfdes getfileids --aid {aid} -t {key_type} -k {key} -m {com_mode}"
+    command = f"hf mfdes getfileids --aid {aid} -t {aid_key_type} -k {aid_key} -m {com_mode}"
     response = send_proxmark_command(command)
 
     # Extract file IDs by looking for "File ID:" regex
@@ -287,7 +340,7 @@ def list_files(aid, key_type, key, com_mode):
         print("No files found in this AID.")
         return []
 
-def read_file(aid, key_type, key, com_mode):
+def read_file(aid, key_type, key, com_mode, aid_key_type, aid_key):
 
     file_id = input("Enter file ID to read: ").strip()
 
@@ -299,7 +352,7 @@ def read_file(aid, key_type, key, com_mode):
     length_input = input("Enter length to read (e.g., 16 for 16 bytes, 64 for 64 bytes, default full read): ").strip() or "0"
     length_hex = format(int(length_input), '06X')  # Convert to 3-byte hex
 
-    read_command = f"hf mfdes read --aid {aid} --fid {file_id} -t {key_type} -k {key} " \
+    read_command = f"hf mfdes read --aid {aid} --fid {file_id} -t {aid_key_type} -k {aid_key} " \
                    f"--offset {offset_hex} --length {length_hex} -m {com_mode}"
     response = send_proxmark_command(read_command)
 
@@ -311,7 +364,7 @@ def read_file(aid, key_type, key, com_mode):
 
     return response
 
-def create_file(aid, key_type, key, com_mode):
+def create_file(aid, key_type, key, com_mode, aid_key_type, aid_key):
 
     # Prompt for file ID in hex format
     file_id = input("Enter file ID (2 hex characters, e.g., 01, 02): ").strip()
@@ -345,16 +398,16 @@ def create_file(aid, key_type, key, com_mode):
         return
 
     create_command = f"hf mfdes createfile --aid {aid} --fid {file_id} --isofid {iso_file_id} " \
-                     f"--size {file_size_hex} -t {key_type} -k {key} -m {com_mode}"
+                     f"--size {file_size_hex} -t {aid_key_type} -k {aid_key} -m {com_mode}"
     response = send_proxmark_command(create_command)
     print(response)
 
-def write_to_file(aid, key_type, key, com_mode):
+def write_to_file(aid, key_type, key, com_mode, aid_key_type, aid_key):
 
     file_id = input("Enter file ID to write to: ").strip()
 
     # Get file size
-    file_size_command = f"hf mfdes getfilesettings --aid {aid} --fid {file_id} -t {key_type} -k {key} -m {com_mode}"
+    file_size_command = f"hf mfdes getfilesettings --aid {aid} --fid {file_id} -t {aid_key_type} -k {aid_key} -m {com_mode}"
     response = send_proxmark_command(file_size_command)
 
     # Extract the file size from the response
@@ -389,12 +442,14 @@ def write_to_file(aid, key_type, key, com_mode):
         else:
             print("❌ Invalid choice. Please choose 1 for text or 2 for hex.")
 
-    write_command = f"hf mfdes write --aid {aid} --fid {file_id} -t {key_type} -k {key} -d {write_data_hex} -m {com_mode}"
+    write_command = f"hf mfdes write --aid {aid} --fid {file_id} -t {aid_key_type} -k {aid_key} -d {write_data_hex} -m {com_mode}"
     response = send_proxmark_command(write_command)
     print(response)
 
-def edit_file_restriction(aid, key_type, key, com_mode):
+def edit_file_restriction(aid, key_type, key, com_mode, aid_key_type, aid_key):
     while True:
+        print("\nNOTE: This only works if you have changed the default keys.")
+        print("The Proxmark3 and other tools will automatically attempt to read files using DESFire default keys.")
         print("\nWould you like to apply or remove a key from the file?")
         print("1. Apply key 0 (Requires authentication for access)")
         print("2. Remove key (Make file freely accessible)")
@@ -409,27 +464,27 @@ def edit_file_restriction(aid, key_type, key, com_mode):
         file_id = input("Enter file ID to update: ").strip()
 
         if choice == "1":
-            command = f"hf mfdes chfilesettings --rawrights 0000 --aid {aid} --fid {file_id} -t {key_type} -k {key} -m {com_mode}"
+            edit_file_command = f"hf mfdes chfilesettings --rawrights 0000 --aid {aid} --fid {file_id} -t {aid_key_type} -k {aid_key} -m {com_mode}"
             print("Applying key 0 for read, write, and change access. This ensures authentication is required to access the file.")
 
         elif choice == "2":
             # Must use encrypt communications mode to remove restrictions
-            command = f"hf mfdes chfilesettings --rawrights EEEE --aid {aid} --fid {file_id} -t {key_type} -k {key} -m encrypt"
+            edit_file_command = f"hf mfdes chfilesettings --rawrights EEEE --aid {aid} --fid {file_id} -t {aid_key_type} -k {aid_key} -m encrypt"
             print("Removing key restrictions. File will be freely accessible.")
 
         else:
             print("❌ Invalid choice. Please enter 1, 2, or 3.")
             continue
 
-        response = send_proxmark_command(command)
+        response = send_proxmark_command(edit_file_command)
         print(response)
         break
 
-def delete_file(aid, key_type, key, com_mode):
+def delete_file(aid, key_type, key, com_mode, aid_key_type, aid_key):
 
     file_id = input("Enter file ID to delete: ").strip()
 
-    delete_command = f"hf mfdes deletefile --aid {aid} --fid {file_id} -t {key_type} -k {key} -m {com_mode}"
+    delete_command = f"hf mfdes deletefile --aid {aid} --fid {file_id} -t {aid_key_type} -k {aid_key} -m {com_mode}"
     response = send_proxmark_command(delete_command)
     print(response)
 
